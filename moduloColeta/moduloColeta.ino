@@ -16,10 +16,10 @@ float vetorASemDC[AMOSTRAS],vetormASemDC[AMOSTRAS],vetorVSemDC[AMOSTRAS];
 unsigned int timeOffset = 0;
 
 uint16_t tempoLoop = 250,tmpVar;
-byte sensorA = A0 ,sensormA = A1, sensorV = A3,led = 13;
+byte sensorA = A0 ,sensormA = A2, sensorV = A3,led = 13;
 boolean estadoLed = true,mAdbg=false,Adbg=false,Vdbg=false;
 char cmd;
-float ganhoA=9.52,ganhomA=9.4,ganhoV=76450;//ganhoV=52250;
+float ganhoA=9.52,ganhomA=184.04,ganhoV=76450;//ganhoV=52250;
 
 float rmsAnterior=0.001;
 boolean houveAlteracaoRMS=false;
