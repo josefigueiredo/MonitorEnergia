@@ -6,7 +6,8 @@
 
 // initialize the library with the numbers of the interface pins
 //http://www.hobbytronics.co.uk/arduino-lcd-keypad-shield
-LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
+// usando esta pinagem para arduinoMEga
+LiquidCrystal lcd(41, 40, 33, 32, 31, 30);
 
 
 //variaveis para medida de tempo
@@ -17,9 +18,9 @@ unsigned int timeOffset = 0;
 
 uint16_t tempoLoop = 250,tmpVar;
 byte sensorA = A0 ,sensormA = A2, sensorV = A3,led = 13;
-boolean estadoLed = true,mAdbg=false,Adbg=false,Vdbg=false;
+boolean estadoLed = true,mAdbg=false,Adbg=false,Vdbg=false,Sdbg=false,rmsTestdbg=false;
 char cmd;
-float ganhoA=9.52,ganhomA=184.04,ganhoV=76450;//ganhoV=52250;
+float ganhoA=9.52,ganhomA=184.04,ganhoV=79850;//ganhoV=52250;
 
 float rmsAnterior=0.001;
 boolean houveAlteracaoRMS=false;
@@ -104,6 +105,15 @@ void loop(){
     cmd = Serial.read();
 
     switch(cmd){
+    case '+':
+      ganhoV+=100;
+      Serial.println(ganhoV);
+      break;
+    case '-':
+      ganhoV-=100;
+      Serial.println(ganhoV);
+      break;
+      
     case 'a':
       mAdbg = !mAdbg;
       break;
@@ -113,13 +123,19 @@ void loop(){
     case 'c':
       Vdbg = !Vdbg;
       break;
+    case 's':
+      Sdbg = !Sdbg;
+      break;
+    case 't':
+      rmsTestdbg = !rmsTestdbg;
+      break;
     case 'm':
       //chama função memoriaLivre()
       Serial.print("memoria livre: ");
       Serial.println(memoriaLivre(),DEC);
       break;
     default:
-      Serial.println("Ativar/desativar debug a(mA), b(A), c(V), m (mem livre) ");
+      Serial.println("Ativar/desativar debug a(mA), b(A), c(V), m (mem livre), s(Serial) ");
       break;  
     }
   }
@@ -188,6 +204,7 @@ void fazLeitura(){
     }
     Serial.println();
   }
+  
 
   //somatorio dos quadrados
   for(uint8_t i=0;i<AMOSTRAS;i++){
@@ -198,31 +215,29 @@ void fazLeitura(){
 
   //raiz quadrada do somatorio dos quadrados peloa raiz do numero de amostras
   CorrRMS = sqrt(accAflt/AMOSTRAS)/ganhoA;
-  CorrmARMS = sqrt(accmAflt/AMOSTRAS)/ganhomA;
+  CorrmARMS = (sqrt(accmAflt/AMOSTRAS)/ganhomA)*1000; //multiplica por 1000 para mostrar em mA
   VoltsRMS = (sqrt(accVflt/AMOSTRAS)/ganhoV)*224900;
 
 
   testaAlteracaoRMS(CorrRMS);
 
+  //se Sdbg is true envia dados pela serial tmb.
+  if(Sdbg == true){
+    Serial.print(CorrRMS);
+    Serial.print(" A, ");
+    Serial.print(CorrmARMS);
+    Serial.print(" mA, ");
+    Serial.print(VoltsRMS);
+    Serial.println(" V");
+
+  }
   //SE o RMS calculado  maior que 999mA descarta a medida e assume  sensor de alta amperagem.
   //imprime a coisa
   if(CorrmARMS > 1000){
-    //atualizaDisplay(CorrRMS,VoltsRMS, 0.86);
-    Serial.print(CorrRMS);
-    Serial.print(" A, ");
-    Serial.print(VoltsRMS);
-    Serial.println(" V");
-
-    //testaAlteracaoRMS(CorrRMS);
+    atualizaDisplay(CorrRMS,VoltsRMS, 0.86);
   }
   else{
-    //atualizaDisplay(CorrmARMS,VoltsRMS, 0.86);
-    Serial.print(CorrRMS);
-    Serial.print(" A, ");
-    Serial.print(VoltsRMS);
-    Serial.println(" V");
-
-    //testaAlteracaoRMS(CorrmARMS);    
+    atualizaDisplaymA(CorrmARMS,VoltsRMS, 0.86);
   }
 
 }
@@ -232,13 +247,14 @@ void testaAlteracaoRMS(float newRMS){
   float dif = newRMS - rmsAnterior;
   if(abs(dif) > 0.15){
     numVezesDiferente++;
-    Serial.println(numVezesDiferente);
+    if(rmsTestdbg == true){
+    Serial.println(numVezesDiferente);}
     //se testou n vezes e deu diferença entao tem que alterar.
     if(numVezesDiferente >= limiteDiferencas){
       numVezesDiferente=0;
       rmsAnterior = newRMS;
-      Serial.println("RMS Alterado");
-      //sendAmostra();
+      if(rmsTestdbg == true){
+      Serial.println("RMS Alterado");}
     }
   }else{numVezesDiferente=0;}
 }
@@ -262,7 +278,7 @@ int memoriaLivre(){
   return memLivre;
 }
 
-
+/// funcoes para display
 void initDisplay(){
   // set up the LCD's number of columns and rows:
   lcd.begin(16, 2);
@@ -304,8 +320,33 @@ void atualizaDisplay(float iRMS,unsigned int vRMS, float fp){
   lcd.setCursor(9,1);
   lcd.print("FP:");
   lcd.print(fp);
+}
+
+void atualizaDisplaymA(int iRMS,unsigned int vRMS, float fp){
+  //mostra corrente
+  lcd.setCursor(0,0);
+  lcd.print("I=");
+  lcd.print(iRMS);
+  lcd.print("mA");
+
+  //mostra tensao
+  lcd.setCursor(0,1);
+  lcd.print("V=");
+  lcd.print(vRMS);
+  lcd.print("V");
+
+  //mostra consumo
+  lcd.setCursor(9,1);
+  lcd.print("Cons:");
+
+
+  //mostra fatorPotencia
+  lcd.setCursor(9,1);
+  lcd.print("FP:");
+  lcd.print(fp);
 
 }
+
 
 void limparDisplay(){
   //limpa o display
@@ -315,9 +356,11 @@ void limparDisplay(){
   lcd.print("                ");
 }
 
+
 void ajustaBrilho(){
   //ajusta o brilho
-  analogWrite(10,150);
+  //analogWrite(10,150);
+  //o que fazer aqui?
 }
 
 
