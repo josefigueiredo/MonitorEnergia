@@ -1,5 +1,7 @@
 #include <TimerOne.h>
 #include <LiquidCrystal.h>
+#include <Ethernet.h>
+#include <SPI.h>
 
 #define AMOSTRAS 64
 #define FREQ 60
@@ -19,7 +21,7 @@ unsigned int timeOffset = 0;
 uint16_t tempoLoop = 250,tmpVar;
 byte sensorA = A0 ,sensormA = A2, sensorV = A3,led = 13;
 boolean estadoLed = true,mAdbg=false,Adbg=false,Vdbg=false,Sdbg=false,rmsTestdbg=false;
-char cmd;
+char cmd,tmpBuf[9];
 //calibraço feita em 1/9/15 com multimetro do prof. Trentin
 //utilizando rotina switch/case para ajuste fino de cada um dos ganhos.
 float ganhoA=8.52,ganhomA=184.04,ganhoV=79850;//ganhoV=52250;
@@ -34,6 +36,16 @@ const unsigned char PS_16 = (1 << ADPS2);
 const unsigned char PS_32 = (1 << ADPS2) | (1 << ADPS0);
 const unsigned char PS_64 = (1 << ADPS2) | (1 << ADPS1);
 const unsigned char PS_128 = (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
+
+//inicializaao socket de rede
+byte mac[] = { 
+  0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
+IPAddress ip(
+172,20,6,254);
+IPAddress server(
+172,20,6,41);
+
+EthernetClient client;
 
 void setup(){
   Serial.begin(9600);
@@ -99,10 +111,20 @@ void setup(){
   Timer1.attachInterrupt( timerIsr ); // attach the service routine here
   //controle tipo semaforos (spinlock)
   //spinLock  uma chave para contrle de acesso ao vetor de leituras
+
+  //ativaçao da rede
+  Ethernet.begin(mac, ip);
+  delay(100);
 }
 
 
 void loop(){
+  //monitora se servidor mandou algo para o cliente
+  if(client.available()){
+    char c = client.read();
+    Serial.print(c);
+  }
+
   if(Serial.available()){
     cmd = Serial.read();
 
@@ -115,7 +137,7 @@ void loop(){
       ganhoA-=1;
       Serial.println(ganhoA);
       break;
-      
+
     case 'a':
       mAdbg = !mAdbg;
       break;
@@ -206,7 +228,7 @@ void fazLeitura(){
     }
     Serial.println();
   }
-  
+
 
   //somatorio dos quadrados
   for(uint8_t i=0;i<AMOSTRAS;i++){
@@ -219,9 +241,6 @@ void fazLeitura(){
   CorrRMS = sqrt(accAflt/AMOSTRAS)/ganhoA;
   CorrmARMS = (sqrt(accmAflt/AMOSTRAS)/ganhomA)*1000; //multiplica por 1000 para mostrar em mA
   VoltsRMS = (sqrt(accVflt/AMOSTRAS)/ganhoV)*224900;
-
-
-  testaAlteracaoRMS(CorrRMS);
 
   //se Sdbg is true envia dados pela serial tmb.
   if(Sdbg == true){
@@ -237,30 +256,110 @@ void fazLeitura(){
   //imprime a coisa
   if(CorrmARMS > 1000){
     atualizaDisplay(CorrRMS,VoltsRMS, 0.86);
+    testaAlteracaoRMS(CorrRMS,VoltsRMS);
   }
   else{
     atualizaDisplaymA(CorrmARMS,VoltsRMS, 0.86);
+    testaAlteracaomARMS(CorrmARMS,VoltsRMS);
   }
 
 }
 
-void testaAlteracaoRMS(float newRMS){
+// o limite para teste de mA  de 0.10A 
+void testaAlteracaoRMS(float newRMS, float volts){
   //Quando teste der 'positivo' n vezes zera contador e envia esta amostra
   float dif = newRMS - rmsAnterior;
-  if(abs(dif) > 0.15){
+  if(abs(dif) > 0.10){
     numVezesDiferente++;
     if(rmsTestdbg == true){
-    Serial.println(numVezesDiferente);}
+      Serial.println(numVezesDiferente);
+    }
     //se testou n vezes e deu diferença entao tem que alterar.
     if(numVezesDiferente >= limiteDiferencas){
       numVezesDiferente=0;
       rmsAnterior = newRMS;
+      sendtoSocket2(3, vetorV, 2, vetorA);
+
       if(rmsTestdbg == true){
-      Serial.println("RMS Alterado");}
+        Serial.println("RMS Alterado");
+      }
     }
-  }else{numVezesDiferente=0;}
+  }
+  else{
+    numVezesDiferente=0;
+  }
+}
+// o limite para teste de mA  de 50mA 
+void testaAlteracaomARMS(float newRMS, float volts){
+  //Quando teste der 'positivo' n vezes zera contador e envia esta amostra
+  float dif = newRMS - rmsAnterior;
+  if(abs(dif) > 50){
+    numVezesDiferente++;
+    if(rmsTestdbg == true){
+      Serial.println(numVezesDiferente);
+    }
+    //se testou n vezes e deu diferença entao tem que alterar.
+    if(numVezesDiferente >= limiteDiferencas){
+      numVezesDiferente=0;
+      rmsAnterior = newRMS;
+      sendtoSocket2(3, vetorV, 1, vetormA);  
+
+      if(rmsTestdbg == true){
+        Serial.println("RMS Alterado");
+      }
+    }
+  }
+  else{
+    numVezesDiferente=0;
+  }
 }
 
+//esta versao manda 1 vetor corrente + tensao RMS
+void sendToSocket(byte sensor, int volts, unsigned int vetorParaEnviar[AMOSTRAS]){  
+  if(client.connect(server,10002)){
+    Serial.println("-> Conectado.");
+    sprintf(tmpBuf,"%d:",sensor);
+    client.print(tmpBuf); //envia nome do sensor
+    sprintf(tmpBuf,"%d:",volts); //envia tensao lida (*10) para ir como inteiro
+    client.print(tmpBuf); //envia valor de tensao
+    //pega o vetor, converte para array de char para envio pelo socket
+    for(uint8_t i=0; i<AMOSTRAS; i++){
+      sprintf(tmpBuf,"%d,",vetorParaEnviar[i]); //enviando somente o valor
+      client.print(tmpBuf);
+    }
+  }
+  else{
+    Serial.println("-> Falha de conexao.");
+  }
+  client.stop();
+}
+
+//esta versao envia 2 vetores (tensao e corrente)
+void sendtoSocket2(byte vSensor, unsigned int vToSend[AMOSTRAS], byte iSensor, unsigned int iToSend[AMOSTRAS]){
+  if(client.connect(server,10002)){
+    Serial.println("-> Conectado.");
+    sprintf(tmpBuf,"%d:",vSensor);
+    client.print(tmpBuf); //envia nome do sensor
+    for(uint8_t i=0; i<AMOSTRAS; i++){
+      sprintf(tmpBuf,"%d,",vToSend[i]); //enviando somente o valor
+      client.print(tmpBuf);
+    }
+    sprintf(tmpBuf,"%d:",iSensor);
+    client.print(tmpBuf); //envia 
+    //pega o vetor, converte para array de char para envio pelo socket
+    for(uint8_t i=0; i<AMOSTRAS; i++){
+      sprintf(tmpBuf,"%d,",iToSend[i]); //enviando somente o valor
+      client.print(tmpBuf);
+    }
+  }
+  else{
+    Serial.println("-> Falha de conexao.");
+  }
+  client.stop();
+
+}
+
+//FUNCAO PARA PISCAR MOSTRANDO QUE ESTA VIVO
 void piscaLed(){
   estadoLed = !estadoLed;
   digitalWrite(led, estadoLed);
@@ -364,6 +463,13 @@ void ajustaBrilho(){
   //analogWrite(10,150);
   //o que fazer aqui?
 }
+
+
+
+
+
+
+
 
 
 
