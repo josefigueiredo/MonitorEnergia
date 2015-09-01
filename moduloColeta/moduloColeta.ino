@@ -20,7 +20,9 @@ uint16_t tempoLoop = 250,tmpVar;
 byte sensorA = A0 ,sensormA = A2, sensorV = A3,led = 13;
 boolean estadoLed = true,mAdbg=false,Adbg=false,Vdbg=false,Sdbg=false,rmsTestdbg=false;
 char cmd;
-float ganhoA=9.52,ganhomA=184.04,ganhoV=79850;//ganhoV=52250;
+//calibraço feita em 1/9/15 com multimetro do prof. Trentin
+//utilizando rotina switch/case para ajuste fino de cada um dos ganhos.
+float ganhoA=8.52,ganhomA=184.04,ganhoV=79850;//ganhoV=52250;
 
 float rmsAnterior=0.001;
 boolean houveAlteracaoRMS=false;
@@ -106,12 +108,12 @@ void loop(){
 
     switch(cmd){
     case '+':
-      ganhoV+=100;
-      Serial.println(ganhoV);
+      ganhoA+=1;
+      Serial.println(ganhoA);
       break;
     case '-':
-      ganhoV-=100;
-      Serial.println(ganhoV);
+      ganhoA-=1;
+      Serial.println(ganhoA);
       break;
       
     case 'a':
@@ -135,7 +137,7 @@ void loop(){
       Serial.println(memoriaLivre(),DEC);
       break;
     default:
-      Serial.println("Ativar/desativar debug a(mA), b(A), c(V), m (mem livre), s(Serial) ");
+      Serial.println("Ativar/desativar debug a(mA), b(A), c(V), m (mem livre), s(Serial),t(alteracaoRMS),+/- (ajuste ganho)");
       break;  
     }
   }
