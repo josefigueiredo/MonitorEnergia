@@ -19,7 +19,7 @@ float vetorASemDC[AMOSTRAS],vetormASemDC[AMOSTRAS],vetorVSemDC[AMOSTRAS];
 unsigned int timeOffset = 0;
 
 uint16_t tempoLoop = 250,tmpVar;
-byte sensorA = A0 ,sensormA = A2, sensorV = A3,led = 13;
+byte sensorA = A1 ,sensormA = A0, sensorV = A3,led = 13;
 boolean estadoLed = true,mAdbg=false,Adbg=false,Vdbg=false,Sdbg=false,rmsTestdbg=false;
 char cmd,tmpBuf[9];
 //calibraço feita em 1/9/15 com multimetro do prof. Trentin
@@ -278,7 +278,7 @@ void testaAlteracaoRMS(float newRMS, float volts){
     if(numVezesDiferente >= limiteDiferencas){
       numVezesDiferente=0;
       rmsAnterior = newRMS;
-      sendtoSocket2(3, vetorV, 2, vetorA);
+      sendtoSocket2(3, vetorV, 2, vetorA,testaDif(dif));
 
       if(rmsTestdbg == true){
         Serial.println("RMS Alterado");
@@ -302,7 +302,7 @@ void testaAlteracaomARMS(float newRMS, float volts){
     if(numVezesDiferente >= limiteDiferencas){
       numVezesDiferente=0;
       rmsAnterior = newRMS;
-      sendtoSocket2(3, vetorV, 1, vetormA);  
+      sendtoSocket2(3, vetorV, 1, vetormA,testaDif(dif));  
 
       if(rmsTestdbg == true){
         Serial.println("RMS Alterado");
@@ -313,6 +313,12 @@ void testaAlteracaomARMS(float newRMS, float volts){
     numVezesDiferente=0;
   }
 }
+
+boolean testaDif(float x){
+ if (x > 0) return true;
+ else if (x < 0) return false;
+}
+
 
 //esta versao manda 1 vetor corrente + tensao RMS
 void sendToSocket(byte sensor, int volts, unsigned int vetorParaEnviar[AMOSTRAS]){  
@@ -335,16 +341,22 @@ void sendToSocket(byte sensor, int volts, unsigned int vetorParaEnviar[AMOSTRAS]
 }
 
 //esta versao envia 2 vetores (tensao e corrente)
-void sendtoSocket2(byte vSensor, unsigned int vToSend[AMOSTRAS], byte iSensor, unsigned int iToSend[AMOSTRAS]){
+void sendtoSocket2(byte vSensor, unsigned int vToSend[AMOSTRAS], byte iSensor, unsigned int iToSend[AMOSTRAS], boolean evento){
   if(client.connect(server,10002)){
     Serial.println("-> Conectado.");
-    sprintf(tmpBuf,"%d:",vSensor);
-    client.print(tmpBuf); //envia nome do sensor
+    //retirei o envio do numero do sensor de tensao [para esta versao eh sempre o mesmo]
+    //sprintf(tmpBuf,"%d:",vSensor);
+    //client.print(tmpBuf); //envia nome do sensor
+    if(evento){
+      client.print("l:"); //envia ligado
+    }else{
+      client.print("d:"); //envia desligado
+    }
     for(uint8_t i=0; i<AMOSTRAS; i++){
       sprintf(tmpBuf,"%d,",vToSend[i]); //enviando somente o valor
       client.print(tmpBuf);
     }
-    sprintf(tmpBuf,"%d:",iSensor);
+    sprintf(tmpBuf,":%d:",iSensor);
     client.print(tmpBuf); //envia 
     //pega o vetor, converte para array de char para envio pelo socket
     for(uint8_t i=0; i<AMOSTRAS; i++){
