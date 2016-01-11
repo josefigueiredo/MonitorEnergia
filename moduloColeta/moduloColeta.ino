@@ -3,8 +3,14 @@
 #include <Ethernet.h>
 #include <SPI.h>
 
+//define o numero de amostras de cada captura
 #define AMOSTRAS 64
+//define a frequencia da rede (pode ser 50)
 #define FREQ 60
+// define os limites superior e infoerir para deteçcao de pico de tensao
+#define TENSAO_LIMIT_S 640
+#define TENSAO_LIMIT_I 400
+
 
 // initialize the library with the numbers of the interface pins
 //http://www.hobbytronics.co.uk/arduino-lcd-keypad-shield
@@ -20,14 +26,17 @@ unsigned int timeOffset = 0;
 
 uint16_t tempoLoop = 250,tmpVar;
 byte sensorA = A1 ,sensormA = A0, sensorV = A3,led = 13;
-boolean estadoLed = true,mAdbg=false,Adbg=false,Vdbg=false,Sdbg=false,rmsTestdbg=false;
+boolean estadoLed = true,mAdbg=false,Adbg=false,Vdbg=false,Sdbg=false,rmsTestdbg=false,overflowDBG=false;
 char cmd,tmpBuf[9];
 //calibraço feita em 1/9/15 com multimetro do prof. Trentin
 //utilizando rotina switch/case para ajuste fino de cada um dos ganhos.
-float ganhoA=8.52,ganhomA=184.04,ganhoV=79850;//ganhoV=52250;
+//float ganhoA=8.52,ganhomA=156,ganhoV=79850;//ganhoV=52250;
+float ganhoA=9,ganhomA=150,ganhoV=79850;//ganhoV=52250; //CHANGE IN 6/11/15
 
+//inicializa com variavel rmsAnterior com corrente mnima
 float rmsAnterior=0.001;
 boolean houveAlteracaoRMS=false;
+//variaveis para controle e teste das diferenças
 byte numVezesDiferente=0,limiteDiferencas=3;
 
 //http://www.microsmart.co.za/technical/2014/03/01/advanced-arduino-adc/
@@ -40,10 +49,10 @@ const unsigned char PS_128 = (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
 //inicializaao socket de rede
 byte mac[] = { 
   0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
-IPAddress ip(
-172,20,6,254);
-IPAddress server(
-172,20,6,41);
+  //meu IP
+IPAddress ip(172,20,6,254);
+// ip do servidor
+IPAddress server(172,20,6,41);
 
 EthernetClient client;
 
@@ -58,12 +67,13 @@ void setup(){
 
 
   // set up the ADC
-  analogReference(EXTERNAL);
+  analogReference(EXTERNAL); //usando uma referncia externa - de 3.3V
   ADCSRA &= ~PS_128;  // remove bits set by Arduino library
   // you can choose a prescaler from above.
   // PS_16, PS_32, PS_64 or PS_128
   ADCSRA |= PS_32;    // set our own prescaler here
 
+  //este teste define o periodo do ciclo conforme a frequencia da rede
   if(FREQ == 60){
     Serial.println("60");
     T = 16666; //tempo do ciclo em microssegundos 
@@ -89,6 +99,7 @@ void setup(){
   // -1 para 64 e 128 (usando preescaler de 32) com 3 leituras (media de 16.58
   tAmostraMinusADTime = tAmostra-duration-1; //subtrai o tempo de cada amostra do tempo de converso.
 
+  //mostra valores iniciais...
   Serial.print("T: ");
   Serial.print(T,10);
   Serial.println("uS");
@@ -119,25 +130,26 @@ void setup(){
 
 
 void loop(){
-  //monitora se servidor mandou algo para o cliente
+  //verifica se servidor mandou algo para o mim
   if(client.available()){
     char c = client.read();
     Serial.print(c);
   }
 
+  //verifica se o firmware recebeu algum comando via serial (debugs e calibraço)
   if(Serial.available()){
     cmd = Serial.read();
 
+    
     switch(cmd){
     case '+':
-      ganhoA+=1;
-      Serial.println(ganhoA);
+      ganhomA+=1;
+      Serial.println(ganhomA);
       break;
     case '-':
-      ganhoA-=1;
-      Serial.println(ganhoA);
+      ganhomA-=1;
+      Serial.println(ganhomA);
       break;
-
     case 'a':
       mAdbg = !mAdbg;
       break;
@@ -158,16 +170,34 @@ void loop(){
       Serial.print("memoria livre: ");
       Serial.println(memoriaLivre(),DEC);
       break;
+    case 'o':
+      overflowDBG = !overflowDBG;
+      break;
     default:
-      Serial.println("Ativar/desativar debug a(mA), b(A), c(V), m (mem livre), s(Serial),t(alteracaoRMS),+/- (ajuste ganho)");
+      Serial.println("Ativar/desativar debug a(mA), b(A), c(V), m (mem livre), s(Serial),t(alteracaoRMS),+/- (ajuste ganho), o(overflow)");
       break;  
     }
   }
 
   fazLeitura();
+  
+  testaSobreTensao();
+
   delay(1000);
 }
 
+//testar se houve picos de tensao - implementado em 23/9
+void testaSobreTensao(){
+  //percorrer o vetor buscando valores acima de PIC_SUP_T e abaixo PIC_INF_T
+  for(uint16_t i=0; i<AMOSTRAS; i++){
+    if (vetorV[i] >= TENSAO_LIMIT_S || vetorV[i] <= TENSAO_LIMIT_I){
+      //o a eh de artefato (nome cientificio da sobretensao)
+      sendtoSocket(3, vetorV, 2, vetorA,'a');
+      Serial.print("Detectado sobre tensao");
+       break;
+    }
+  }
+}
 
 //executado por fora do loop
 void timerIsr(){
@@ -179,7 +209,12 @@ void fazLeitura(){
   unsigned int accV=0,accA=0,accmA=0,CorrmARMS=0,VoltsRMS=0;
   float mediaV=0.0,mediaA=0.0,mediamA=0.0,CorrRMS=0,accVflt=0,accAflt=0,accmAflt=0;
 
-  //microseconds = micros();
+  //laço para coleta dos valores 
+  // este laço faz a leitura sequncial dos tres sensores da rede..
+  // o primeiro para correntes acima de 1A
+  // o segundo para correntes abaixo de 1A
+  // o terceiro para tensao
+  // as variaveis acc* so responsaveis por acumular o valor de cada leitura (sera usado mais tarde para remocao do nivel DC)
   for(uint16_t i=0; i<AMOSTRAS; i++){
     vetorA[i] = analogRead(sensorA);
     vetormA[i] = analogRead(sensormA);
@@ -187,23 +222,22 @@ void fazLeitura(){
     accA += vetorA[i];
     accmA += vetormA[i];
     accV += vetorV[i];
+    //este delay eh necessario para ajustar o tempo de cada captura [ este tempo eh calculado na inicializaço ]
     delayMicroseconds(tAmostraMinusADTime);
   }
-  //duration = micros() - microseconds;
-  //Serial.print(" - tempo leitura dois canais 64 amostras: ");   
-  //Serial.println(duration);
-  //duration = 0;
-
+  //calcula a media de cada vetor para remoçao do nivel DC
   mediaA = (float)accA / AMOSTRAS;
   mediamA = (float)accmA / AMOSTRAS;
   mediaV = (float)accV / AMOSTRAS;  
 
+  //remove o nivel DC de cada amostra
   for(uint8_t i=0;i<AMOSTRAS;i++){
     vetorASemDC[i] = (float)vetorA[i] - mediaA;
     vetormASemDC[i] = (float)vetormA[i] - mediamA;
     vetorVSemDC[i] = (float)vetorV[i] - mediaV;
   }
 
+  //debug pra leitura do sensor acima de 1A
   if(Adbg == true){
     Serial.print("A,");
     for(uint8_t i=0;i<AMOSTRAS;i++){
@@ -212,6 +246,7 @@ void fazLeitura(){
     }
     Serial.println();
   }
+  //debug pra leitura do sensor abaixo de 1A
   if(mAdbg == true){
     Serial.print("mA,");
     for(uint8_t i=0;i<AMOSTRAS;i++){
@@ -220,6 +255,7 @@ void fazLeitura(){
     }
     Serial.println();
   }
+  //debug pra leitura do sensor de tensao  
   if(Vdbg == true){
     Serial.print("V,");
     for(uint8_t i=0;i<AMOSTRAS;i++){
@@ -228,9 +264,17 @@ void fazLeitura(){
     }
     Serial.println();
   }
-
+  //debug pra overflow (nao sei o que e isso)
+  if(overflowDBG == true ){
+    Serial.println("Tensao: ");
+    for(uint16_t i=0; i<AMOSTRAS; i++){
+      Serial.print(vetorV[i]);
+      Serial.print(",");
+    }
+  }
 
   //somatorio dos quadrados
+  //para calculo RMS
   for(uint8_t i=0;i<AMOSTRAS;i++){
     accAflt += (vetorASemDC[i] * vetorASemDC[i]);
     accmAflt += (vetormASemDC[i] * vetormASemDC[i]);    
@@ -240,9 +284,9 @@ void fazLeitura(){
   //raiz quadrada do somatorio dos quadrados peloa raiz do numero de amostras
   CorrRMS = sqrt(accAflt/AMOSTRAS)/ganhoA;
   CorrmARMS = (sqrt(accmAflt/AMOSTRAS)/ganhomA)*1000; //multiplica por 1000 para mostrar em mA
-  VoltsRMS = (sqrt(accVflt/AMOSTRAS)/ganhoV)*224900;
-
-  //se Sdbg is true envia dados pela serial tmb.
+  VoltsRMS = (sqrt(accVflt/AMOSTRAS)/ganhoV)*224900; //divide pelo valor do resistor para encontrar a tenso
+ 
+  //se Sdbg is true envia valores RMS pela serial tmb.
   if(Sdbg == true){
     Serial.print(CorrRMS);
     Serial.print(" A, ");
@@ -262,10 +306,12 @@ void fazLeitura(){
     atualizaDisplaymA(CorrmARMS,VoltsRMS, 0.86);
     testaAlteracaomARMS(CorrmARMS,VoltsRMS);
   }
-
 }
 
-// o limite para teste de mA  de 0.10A 
+// o limite para teste de mA de 0.10A
+// esta funçao serve para detectar se houve alteraçao do valor RMS
+// o teste  aplicado a cada 3 leituras (limiteDiferencas=3;)
+// se 3 leituras de corrente tiverem uma diferença maior que 100mA entao temos um evento
 void testaAlteracaoRMS(float newRMS, float volts){
   //Quando teste der 'positivo' n vezes zera contador e envia esta amostra
   float dif = newRMS - rmsAnterior;
@@ -278,7 +324,8 @@ void testaAlteracaoRMS(float newRMS, float volts){
     if(numVezesDiferente >= limiteDiferencas){
       numVezesDiferente=0;
       rmsAnterior = newRMS;
-      sendtoSocket2(3, vetorV, 2, vetorA,testaDif(dif));
+      sendtoSocket(3, vetorV, 2, vetorA,testaDif(dif));
+      Serial.print("Detectado um evento");
 
       if(rmsTestdbg == true){
         Serial.println("RMS Alterado");
@@ -289,7 +336,9 @@ void testaAlteracaoRMS(float newRMS, float volts){
     numVezesDiferente=0;
   }
 }
-// o limite para teste de mA  de 50mA 
+
+
+// idem para funcao anterior mas limite para teste de mA eh de 50mA 
 void testaAlteracaomARMS(float newRMS, float volts){
   //Quando teste der 'positivo' n vezes zera contador e envia esta amostra
   float dif = newRMS - rmsAnterior;
@@ -302,7 +351,7 @@ void testaAlteracaomARMS(float newRMS, float volts){
     if(numVezesDiferente >= limiteDiferencas){
       numVezesDiferente=0;
       rmsAnterior = newRMS;
-      sendtoSocket2(3, vetorV, 1, vetormA,testaDif(dif));  
+      sendtoSocket(3, vetorV, 1, vetormA,testaDif(dif));  
 
       if(rmsTestdbg == true){
         Serial.println("RMS Alterado");
@@ -314,61 +363,43 @@ void testaAlteracaomARMS(float newRMS, float volts){
   }
 }
 
-boolean testaDif(float x){
- if (x > 0) return true;
- else if (x < 0) return false;
-}
-
-
-//esta versao manda 1 vetor corrente + tensao RMS
-void sendToSocket(byte sensor, int volts, unsigned int vetorParaEnviar[AMOSTRAS]){  
-  if(client.connect(server,10002)){
-    Serial.println("-> Conectado.");
-    sprintf(tmpBuf,"%d:",sensor);
-    client.print(tmpBuf); //envia nome do sensor
-    sprintf(tmpBuf,"%d:",volts); //envia tensao lida (*10) para ir como inteiro
-    client.print(tmpBuf); //envia valor de tensao
-    //pega o vetor, converte para array de char para envio pelo socket
-    for(uint8_t i=0; i<AMOSTRAS; i++){
-      sprintf(tmpBuf,"%d,",vetorParaEnviar[i]); //enviando somente o valor
-      client.print(tmpBuf);
-    }
-  }
-  else{
-    Serial.println("-> Falha de conexao.");
-  }
-  client.stop();
+//esta funçao apenas retorna se o evento foi ligar (l) ou desligar(d)
+char testaDif(float x){
+  if (x > 0) return 'l';
+  else if (x < 0) return 'd';
 }
 
 //esta versao envia 2 vetores (tensao e corrente)
-void sendtoSocket2(byte vSensor, unsigned int vToSend[AMOSTRAS], byte iSensor, unsigned int iToSend[AMOSTRAS], boolean evento){
+//funçao socekt tcp
+// os parametros sao: (numero do sensor, vetor de tensao, numero sensor corrente, vetor corrente, tipo evento) 
+void sendtoSocket(byte vSensor, unsigned int vToSend[AMOSTRAS], byte iSensor, unsigned int iToSend[AMOSTRAS], char evento){
   if(client.connect(server,10002)){
     Serial.println("-> Conectado.");
     //retirei o envio do numero do sensor de tensao [para esta versao eh sempre o mesmo]
     //sprintf(tmpBuf,"%d:",vSensor);
     //client.print(tmpBuf); //envia nome do sensor
-    if(evento){
-      client.print("l:"); //envia ligado
-    }else{
-      client.print("d:"); //envia desligado
-    }
+    client.print(evento); //envia tipo do evento pelo socket
+    client.print(":"); //envia separador pelo socket
+    
+    //percore o vetor de tensao para enviar todo pelo socket
     for(uint8_t i=0; i<AMOSTRAS; i++){
-      sprintf(tmpBuf,"%d,",vToSend[i]); //enviando somente o valor
-      client.print(tmpBuf);
+      sprintf(tmpBuf,"%d,",vToSend[i]); //converte valor da posiçao para char*
+      client.print(tmpBuf); // envia pelo socket
     }
-    sprintf(tmpBuf,":%d:",iSensor);
-    client.print(tmpBuf); //envia 
-    //pega o vetor, converte para array de char para envio pelo socket
+    sprintf(tmpBuf,":%d:",iSensor); ////converte numero do sensor para char* (concatena com separador :)
+    client.print(tmpBuf); //envia pelo socket
+    //percore o vetor de corrente para enviar todo pelo socket
     for(uint8_t i=0; i<AMOSTRAS; i++){
-      sprintf(tmpBuf,"%d,",iToSend[i]); //enviando somente o valor
-      client.print(tmpBuf);
+      sprintf(tmpBuf,"%d,",iToSend[i]); //converte valor da posiçao para char*
+      client.print(tmpBuf); // envia pelo socket
     }
   }
   else{
+    // mensagem de erro se no conectar ao servidor..
     Serial.println("-> Falha de conexao.");
+    
   }
-  client.stop();
-
+  client.stop(); //encerra a comunicaçao
 }
 
 //FUNCAO PARA PISCAR MOSTRANDO QUE ESTA VIVO
@@ -378,7 +409,7 @@ void piscaLed(){
 }
 
 
-//função que 'quantifica' memoria livre
+//função que 'quantifica' ou 'mede' a memoria livre
 extern int __bss_end;
 extern void *__brkval;
 
@@ -391,7 +422,10 @@ int memoriaLivre(){
   return memLivre;
 }
 
-/// funcoes para display
+
+//**********************************
+//************* funcoes para display
+//**********************************
 void initDisplay(){
   // set up the LCD's number of columns and rows:
   lcd.begin(16, 2);
@@ -409,7 +443,6 @@ void initDisplay(){
 
   limparDisplay();
 }
-
 
 void atualizaDisplay(float iRMS,unsigned int vRMS, float fp){
   //mostra corrente
@@ -452,7 +485,6 @@ void atualizaDisplaymA(int iRMS,unsigned int vRMS, float fp){
   lcd.setCursor(9,1);
   lcd.print("Cons:");
 
-
   //mostra fatorPotencia
   lcd.setCursor(9,1);
   lcd.print("FP:");
@@ -477,9 +509,29 @@ void ajustaBrilho(){
 }
 
 
+/* O QUE ESTA DAQUI PARA BAIXO NAO ESTA MAIS SENDO USADO
+########################################################################################/
+//esta versao manda 1 vetor corrente + tensao RMS
+void sendToSocket(byte sensor, int volts, unsigned int vetorParaEnviar[AMOSTRAS]){  
+  if(client.connect(server,10002)){
+    Serial.println("-> Conectado.");
+    sprintf(tmpBuf,"%d:",sensor);
+    client.print(tmpBuf); //envia nome do sensor
+    sprintf(tmpBuf,"%d:",volts); //envia tensao lida (*10) para ir como inteiro
+    client.print(tmpBuf); //envia valor de tensao
+    //pega o vetor, converte para array de char para envio pelo socket
+    for(uint8_t i=0; i<AMOSTRAS; i++){
+      sprintf(tmpBuf,"%d,",vetorParaEnviar[i]); //enviando somente o valor
+      client.print(tmpBuf);
+    }
+  }
+  else{
+    Serial.println("-> Falha de conexao.");
+  }
+  client.stop();
+}
 
-
-
+*/
 
 
 
