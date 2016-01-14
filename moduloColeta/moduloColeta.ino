@@ -445,9 +445,13 @@ void initDisplay(){
 }
 
 void atualizaDisplay(float iRMS,unsigned int vRMS, float fp){
+  lcd.setCursor(0,1);
+  lcd.print("                ");
+  
+  
   //mostra corrente
-  lcd.setCursor(0,0);
-  lcd.print("I=");
+  lcd.setCursor(6,1);
+  lcd.print("/I=");
   lcd.print(iRMS);
   lcd.print("A");
 
@@ -457,21 +461,23 @@ void atualizaDisplay(float iRMS,unsigned int vRMS, float fp){
   lcd.print(vRMS);
   lcd.print("V");
 
-  //mostra consumo
-  lcd.setCursor(9,1);
-  lcd.print("Cons:");
+  ////mostra consumo
+  //lcd.setCursor(9,1);
+  //lcd.print("Cons:");
 
 
   //mostra fatorPotencia
-  lcd.setCursor(9,1);
-  lcd.print("FP:");
-  lcd.print(fp);
+  //lcd.setCursor(9,1);
+  //lcd.print("FP:");
+  //lcd.print(fp);
 }
 
 void atualizaDisplaymA(int iRMS,unsigned int vRMS, float fp){
+  lcd.setCursor(0,1);
+  lcd.print("                ");
   //mostra corrente
-  lcd.setCursor(0,0);
-  lcd.print("I=");
+  lcd.setCursor(6,1);
+  lcd.print("/I=");
   lcd.print(iRMS);
   lcd.print("mA");
 
@@ -482,13 +488,14 @@ void atualizaDisplaymA(int iRMS,unsigned int vRMS, float fp){
   lcd.print("V");
 
   //mostra consumo
-  lcd.setCursor(9,1);
-  lcd.print("Cons:");
+  //lcd.setCursor(9,1);
+  //lcd.print("Cons:");
 
   //mostra fatorPotencia
-  lcd.setCursor(9,1);
-  lcd.print("FP:");
-  lcd.print(fp);
+  // desativado em 14/1 (fotos dissertaçao)
+  //lcd.setCursor(9,1);
+  //lcd.print("FP:");
+  //lcd.print(fp);
 
 }
 
@@ -499,6 +506,9 @@ void limparDisplay(){
   lcd.print("                ");
   lcd.setCursor(0,1);
   lcd.print("                ");
+  
+  lcd.setCursor(0,0);
+  lcd.print(" Prototipo MCCT ");
 }
 
 
