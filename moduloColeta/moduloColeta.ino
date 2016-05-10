@@ -31,7 +31,7 @@ char cmd,tmpBuf[9];
 //calibraço feita em 1/9/15 com multimetro do prof. Trentin
 //utilizando rotina switch/case para ajuste fino de cada um dos ganhos.
 //float ganhoA=8.52,ganhomA=156,ganhoV=79850;//ganhoV=52250;
-float ganhoA=9,ganhomA=150,ganhoV=79850;//ganhoV=52250; //CHANGE IN 6/11/15
+float ganhoA=9,ganhomA=150,ganhoV=75850;//ganhoV=52250; //CHANGE IN 6/11/15
 
 //inicializa com variavel rmsAnterior com corrente mnima
 float rmsAnterior=0.001;
@@ -143,12 +143,12 @@ void loop(){
     
     switch(cmd){
     case '+':
-      ganhomA+=1;
-      Serial.println(ganhomA);
+      ganhoV+=1000;
+      Serial.println(ganhoV);
       break;
     case '-':
-      ganhomA-=1;
-      Serial.println(ganhomA);
+      ganhoV-=1000;
+      Serial.println(ganhoV);
       break;
     case 'a':
       mAdbg = !mAdbg;
